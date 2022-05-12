@@ -33,6 +33,12 @@ namespace NuGetGallery.Configuration
         private readonly Lazy<IServiceBusConfiguration> _lazyServiceBusConfiguration;
         private readonly Lazy<IPackageDeleteConfiguration> _lazyPackageDeleteConfiguration;
 
+        private ITelemetryClient _telemetryClient;
+        public ITelemetryClient TelemetryClient
+        {
+            set => _telemetryClient = value;
+        }
+
         private static readonly HashSet<string> NotInjectedSettingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             SettingPrefix + "SqlServer",
             SettingPrefix + "SqlServerReadOnlyReplica",
@@ -221,22 +227,30 @@ namespace NuGetGallery.Configuration
             string value = null;
             try
             {
-                if (RoleEnvironment.IsAvailable)
-                {
+                //if (RoleEnvironment.IsAvailable)
+                //{
                     value = RoleEnvironment.GetConfigurationSettingValue(settingName);
-                }
-                else
-                {
-                    _notInCloudService = true;
-                }
+                //}
+                //else
+                //{
+                //    _notInCloudService = true;
+                //}
             }
             catch (TypeInitializationException)
             {
+                if (_telemetryClient != null)
+                {
+                    _telemetryClient.TrackTrace("d-gcs-test - yes, it threw TypeInitializationException", Microsoft.Extensions.Logging.LogLevel.Information, new Microsoft.Extensions.Logging.EventId(55));
+                }
                 // Not in the role environment...
                 _notInCloudService = true; // Skip future checks to save perf
             }
-            catch (Exception)
+            catch (Exception e)
             {
+                if (_telemetryClient != null)
+                {
+                    _telemetryClient.TrackTrace("d-gcs-test - yes, it threw " + e.Message, Microsoft.Extensions.Logging.LogLevel.Information, new Microsoft.Extensions.Logging.EventId(55));
+                }
                 // Value not present
                 return null;
             }

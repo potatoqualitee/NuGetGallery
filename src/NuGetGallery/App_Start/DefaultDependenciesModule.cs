@@ -131,6 +131,8 @@ namespace NuGetGallery
             services.AddSingleton(loggerFactory);
             services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
 
+            configuration.TelemetryClient = telemetryClient;
+
             UrlHelperExtensions.SetConfigurationService(configuration);
             builder.RegisterType<UrlHelperWrapper>()
                 .As<IUrlHelper>()
@@ -562,15 +564,17 @@ namespace NuGetGallery
             // Add enrichers
             try
             {
-                if (RoleEnvironment.IsAvailable)
-                {
+                //if (RoleEnvironment.IsAvailable)
+                //{
                     telemetryConfiguration.TelemetryInitializers.Add(
                         new DeploymentIdTelemetryEnricher(RoleEnvironment.DeploymentId));
-                }
+                //}
             }
             catch
             {
                 // This likely means the cloud service runtime is not available.
+                telemetryConfiguration.TelemetryInitializers.Add(
+                    new DeploymentIdTelemetryEnricher("d-id-test - yes, it threw"));
             }
 
             if (configuration.DeploymentLabel != null)

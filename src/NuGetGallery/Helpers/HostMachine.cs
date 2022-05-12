@@ -18,18 +18,18 @@ namespace NuGetGallery.Helpers
         {
             try
             {
-                if (RoleEnvironment.IsAvailable)
-                {
+                //if (RoleEnvironment.IsAvailable)
+                //{
                     return RoleEnvironment.CurrentRoleInstance.Id;
-                }
-                else
-                {
-                    return Environment.MachineName;
-                }
+                //}
+                //else
+                //{
+                //    return Environment.MachineName;
+                //}
             }
             catch // Can't even run RoleEnvironment.IsAvailable because Azure SDK is not installed.
             {
-                return Environment.MachineName;
+                return "d-mn-test yes, it threw: " + Environment.MachineName;
             }
         }
     }

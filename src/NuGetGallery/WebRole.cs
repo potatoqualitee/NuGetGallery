@@ -4,11 +4,11 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
-using Microsoft.WindowsAzure.ServiceRuntime;
+//using Microsoft.WindowsAzure.ServiceRuntime;
 
 namespace NuGetGallery
 {
-    public class WebRole
+    /*public class WebRole
         : RoleEntryPoint
     {
         public override void OnStop()
@@ -42,5 +42,5 @@ namespace NuGetGallery
                 }
             }
         }
-    }
+    }*/
 }

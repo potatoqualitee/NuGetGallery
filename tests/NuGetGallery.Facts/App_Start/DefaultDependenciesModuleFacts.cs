@@ -91,7 +91,7 @@ namespace NuGetGallery.App_Start
                     telemetryClientWrapper.UnderlyingClient.Context.InstrumentationKey);
             }
 
-            [Theory]
+/*            [Theory]
             [InlineData("deployment-label")]
             [InlineData(null)]
             public void ConfiguresTelemetryInitializers(string deploymentLabel)
@@ -110,7 +110,7 @@ namespace NuGetGallery.App_Start
                     aiConfiguration.TelemetryConfiguration.TelemetryInitializers,
                     elementInspectors);
             }
-
+*/
             [Fact]
             public void SetsApplicationIdProvider()
             {
