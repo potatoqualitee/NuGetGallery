@@ -3,8 +3,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Web;
 using NuGet.Services.Entities;
+#if NETFRAMEWORK
+using System.Web;
+#else
+using Microsoft.AspNetCore.Http;
+using NuGetGallery.Services.Helpers;
+#endif
 
 namespace NuGetGallery.Security
 {
@@ -13,15 +18,23 @@ namespace NuGetGallery.Security
     /// </summary>
     public class UserSecurityPolicyEvaluationContext
     {
-        private Lazy<HttpContextBase> _httpContext;
+        private Lazy<HttpContext> _httpContext;
         private User _sourceAccount;
         private User _targetAccount;
+#if !NETFRAMEWORK
+        private IHttpContextHelper _httpContextHelper;
+
+        public UserSecurityPolicyEvaluationContext(IHttpContextHelper httpContextHelper)
+        {
+            _httpContextHelper = httpContextHelper;                
+        }
+#endif
 
         /// <summary>
         /// Current http context. This has been required for some user security policies in order
         /// to get the current user and/or current request details.
         /// </summary>
-        public HttpContextBase HttpContext
+        public HttpContext HttpContext
         {
             get
             {
@@ -72,12 +85,17 @@ namespace NuGetGallery.Security
         /// </summary>
         public UserSecurityPolicyEvaluationContext(
             IEnumerable<UserSecurityPolicy> policies,
-            HttpContextBase httpContext)
+            HttpContext httpContext)
         {
             Policies = policies ?? throw new ArgumentNullException(nameof(policies));
 
-            _httpContext = new Lazy<HttpContextBase>(() => httpContext
+#if NETFRAMEWORK
+            _httpContext = new Lazy<HttpContext>(() => httpContext
                 ?? new HttpContextWrapper(System.Web.HttpContext.Current));
+#else
+            _httpContext = new Lazy<HttpContext>(() => httpContext
+                ?? new HttpContextWrapper(System.Web.HttpContext.Current));
+#endif
         }
 
         /// <summary>
@@ -87,7 +105,7 @@ namespace NuGetGallery.Security
             IEnumerable<UserSecurityPolicy> policies,
             User sourceAccount,
             User targetAccount,
-            HttpContextBase httpContext = null)
+            HttpContext httpContext = null)
             : this(policies, httpContext)
         {
             _sourceAccount = sourceAccount;

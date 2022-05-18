@@ -28,12 +28,14 @@ namespace NuGetGallery
 
         void TrackODataCustomQuery(bool? customQuery);
 
+#if NETFRAMEWORK
         void TrackPackagePushEvent(Package package, User user, IIdentity identity);
 
         void TrackPackagePushFailureEvent(string id, NuGetVersion version);
-
+#endif
         void TrackPackagePushDisconnectEvent();
 
+#if NETFRAMEWORK
         void TrackPackageUnlisted(Package package);
 
         void TrackPackageListed(Package package);
@@ -49,16 +51,17 @@ namespace NuGetGallery
         void TrackPackageHardDeleteReflow(string packageId, string packageVersion);
 
         void TrackPackageRevalidate(Package package);
-
         void TrackPackageDeprecate(
             IReadOnlyList<Package> packages,
             PackageDeprecationStatus status,
             PackageRegistration alternateRegistration,
             Package alternatePackage,
             bool hasCustomMessage);
+#endif
 
         void TrackPackageReadMeChangeEvent(Package package, string readMeSourceType, PackageEditReadMeState readMeState);
 
+#if NETFRAMEWORK
         void TrackCreatePackageVerificationKeyEvent(string packageId, string packageVersion, User user, IIdentity identity);
 
         void TrackPackagePushNamespaceConflictEvent(string packageId, string packageVersion, User user, IIdentity identity);
@@ -74,15 +77,18 @@ namespace NuGetGallery
         void TrackNewCredentialCreated(User user, Credential credential);
 
         void TrackUserLogin(User user, Credential credential, bool wasMultiFactorAuthenticated);
+#endif
 
         /// <summary>
         /// A telemetry event emitted when the service checks whether a user package delete is allowed.
         /// </summary>
         void TrackUserPackageDeleteChecked(UserPackageDeleteEvent details, UserPackageDeleteOutcome outcome);
 
+#if NETFRAMEWORK
         void TrackPackageMetadataComplianceError(string packageId, string packageVersion, IEnumerable<string> complianceFailures);
 
         void TrackPackageMetadataComplianceWarning(string packageId, string packageVersion, IEnumerable<string> complianceWarnings);
+#endif
 
         /// <summary>
         /// A telemetry event emitted when a user package delete is executed.
@@ -97,12 +103,14 @@ namespace NuGetGallery
         /// or empty.</exception>
         void TrackCertificateAdded(string thumbprint);
 
+#if NETFRAMEWORK
         /// <summary>
         /// A telemetry event emitted when a package owner was automatically added to a package registration.
         /// </summary>
         /// <param name="packageId">The package registration id.</param>
         /// <param name="packageVersion">The normalized package version.</param>
         void TrackPackageOwnershipAutomaticallyAdded(string packageId, string packageVersion);
+#endif
 
         /// <summary>
         /// A telemetry event emitted when a certificate is activated for an account.
@@ -187,6 +195,7 @@ namespace NuGetGallery
         /// <param name="attemptNumber">The number of attempts the message has tried to be sent.</param>
         void TrackSendEmail(string smtpUri, DateTimeOffset startTime, TimeSpan duration, bool success, int attemptNumber);
 
+#if NETFRAMEWORK
         /// <summary>
         /// A telemetry event emitted when a symbol package is pushed.
         /// </summary>
@@ -207,12 +216,14 @@ namespace NuGetGallery
         /// <param name="packageId">The id of the package that has the symbols uploaded.</param>
         /// <param name="packageVersion">The version of the package that has the symbols uploaded.</param>
         void TrackSymbolPackagePushFailureEvent(string packageId, string packageVersion);
+#endif
 
         /// <summary>
         /// A telemetry event emitted when a symbol package push failed due to client disconnect.
         /// </summary>
         void TrackSymbolPackagePushDisconnectEvent();
 
+#if NETFRAMEWORK
         /// <summary>
         /// A telemetry event emitted when a symbol package fails Gallery validation.
         /// </summary>
@@ -226,6 +237,7 @@ namespace NuGetGallery
         /// <param name="packageId">The id of the symbols package that has the symbols revalidated.</param>
         /// <param name="packageVersion">The version of the symbols package that has the symbols revalidated.</param>
         void TrackSymbolPackageRevalidate(string packageId, string packageVersion);
+#endif
 
         /// <summary>
         /// The typosquatting check result and total time for the uploaded package.

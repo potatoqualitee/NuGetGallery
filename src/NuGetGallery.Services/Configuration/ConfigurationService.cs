@@ -14,6 +14,9 @@ using System.Web.Configuration;
 using NuGet.Services.Configuration;
 using NuGet.Services.KeyVault;
 using NuGetGallery.Configuration.SecretReader;
+#if !NETFRAMEWORK
+using NuGetGallery.Services.Helpers;
+#endif
 
 namespace NuGetGallery.Configuration
 {
@@ -24,13 +27,15 @@ namespace NuGetGallery.Configuration
         protected const string ServiceBusPrefix = "AzureServiceBus.";
         protected const string PackageDeletePrefix = "PackageDelete.";
 
-        private bool _notInCloudService;
         private readonly Lazy<string> _httpSiteRootThunk;
         private readonly Lazy<string> _httpsSiteRootThunk;
         private readonly Lazy<IAppConfiguration> _lazyAppConfiguration;
         private readonly Lazy<FeatureConfiguration> _lazyFeatureConfiguration;
         private readonly Lazy<IServiceBusConfiguration> _lazyServiceBusConfiguration;
         private readonly Lazy<IPackageDeleteConfiguration> _lazyPackageDeleteConfiguration;
+#if !NETFRAMEWORK
+        private IHttpContextHelper _httpContextHelper;
+#endif
 
         private static readonly HashSet<string> NotInjectedSettingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             SettingPrefix + "SqlServer",
@@ -39,6 +44,13 @@ namespace NuGetGallery.Configuration
             SettingPrefix + "ValidationSqlServer" };
 
         public ICachingSecretInjector SecretInjector { get; set; }
+
+#if !NETFRAMEWORK
+        public ConfigurationService(IHttpContextHelper httpContextHelper)
+        {
+            _httpContextHelper = httpContextHelper;
+        }
+#endif
 
         /// <summary>
         /// Initializes the configuration service and associates a secret injector based on the configured KeyVault

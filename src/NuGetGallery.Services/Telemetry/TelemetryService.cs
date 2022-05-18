@@ -7,7 +7,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Security.Principal;
 using System.Web;
-using Microsoft.Owin.Security.MicrosoftAccount;
+//using Microsoft.Owin.Security.MicrosoftAccount;
 using Newtonsoft.Json;
 using NuGet.Services.Entities;
 using NuGet.Services.FeatureFlags;
@@ -352,6 +352,7 @@ namespace NuGetGallery
             });
         }
 
+#if NETFRAMEWORK
         public void TrackPackagePushEvent(Package package, User user, IIdentity identity)
         {
             if (package == null)
@@ -439,6 +440,7 @@ namespace NuGetGallery
                 addProperties.Add(WasMultiFactorAuthenticated, wasMultiFactorAuthenticated.ToString());
             });
         }
+#endif
 
         public void TrackUserPackageDeleteExecuted(int packageKey, string packageId, string packageVersion, ReportPackageReason reason, bool success)
         {
@@ -462,6 +464,7 @@ namespace NuGetGallery
             });
         }
 
+#if NETFRAMEWORK
         public void TrackPackageUnlisted(Package package)
         {
             TrackMetricForPackage(Events.PackageUnlisted, package);
@@ -561,6 +564,7 @@ namespace NuGetGallery
                 packageId,
                 packageVersion);
         }
+#endif
 
         public void TrackCertificateAdded(string thumbprint)
         {
@@ -599,6 +603,7 @@ namespace NuGetGallery
             _telemetryClient.TrackException(exception, telemetryProperties, metrics: null);
         }
 
+#if NETFRAMEWORK
         public void TrackSymbolPackagePushEvent(string packageId, string packageVersion)
         {
             TrackMetricForSymbolPackage(Events.SymbolPackagePush, packageId, packageVersion);
@@ -642,6 +647,7 @@ namespace NuGetGallery
                 addProperties?.Invoke(properties);
             });
         }
+#endif
 
         private void TrackMetricForCertificateActivity(string eventName, string thumbprint)
         {
@@ -655,6 +661,8 @@ namespace NuGetGallery
                 properties.Add(Sha256Thumbprint, thumbprint);
             });
         }
+
+#if NETFRAMEWORK
         private static string GetClientVersion()
         {
             return HttpContext.Current?.Request?.Headers[ServicesConstants.ClientVersionHeaderName];
@@ -675,6 +683,7 @@ namespace NuGetGallery
 
             return null;
         }
+#endif
 
         private static string GetAccountCreationDate(User user)
         {
@@ -692,6 +701,7 @@ namespace NuGetGallery
             return apiKey?.Created.ToString("O") ?? "N/A";
         }
 
+#if NETFRAMEWORK
         private void TrackMetricForSymbolPackage(
             string metricName,
             string packageId,
@@ -809,6 +819,7 @@ namespace NuGetGallery
                 addProperties?.Invoke(properties);
             });
         }
+#endif
 
         public void TrackUserPackageDeleteChecked(UserPackageDeleteEvent details, UserPackageDeleteOutcome outcome)
         {
