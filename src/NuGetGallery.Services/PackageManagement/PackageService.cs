@@ -712,6 +712,16 @@ namespace NuGetGallery
             return package.GetSupportedFrameworks();
         }
 
+        public virtual IEnumerable<NuGetFramework> GetSupportedFrameworks(NuspecReader nuspecReader, IList<string> packageFiles)
+        {
+            if (nuspecReader != null)
+            {
+                return GetSupportedFrameworks(nuspecReader.GetId(), nuspecReader.GetPackageTypes(), packageFiles);
+            }
+
+            return Enumerable.Empty<NuGetFramework>();
+        }
+
         /// <summary>
         /// This method combines the logic used in restore operations to make a determination about the TFM supported by the package.
         /// We have curated a set of compatibility requirements for our needs in NuGet.org. The client logic can be found here:
@@ -724,10 +734,10 @@ namespace NuGetGallery
         /// - If this isn't a tools package, we look for build-time, runtime, content and resource file patterns
         /// For added details on the various cases, see unit tests targeting this method.
         /// </summary>
-        public virtual IEnumerable<NuGetFramework> GetSupportedFrameworks(NuspecReader nuspecReader, IList<string> packageFiles)
+        public virtual IEnumerable<NuGetFramework> GetSupportedFrameworks(string packageId, IReadOnlyList<PackageType> packageTypes, IList<string> packageFiles)
         {
             var supportedTFMs = Enumerable.Empty<NuGetFramework>();
-            if (packageFiles != null && packageFiles.Any() && nuspecReader != null)
+            if (packageFiles != null && packageFiles.Any())
             {
                 // Setup content items for analysis
                 var items = new ContentItemCollection();
@@ -737,7 +747,6 @@ namespace NuGetGallery
 
                 // Let's test for tools packages first--they're a special case
                 var groups = Enumerable.Empty<ContentItemGroup>();
-                var packageTypes = nuspecReader.GetPackageTypes();
                 if (packageTypes.Count == 1 && (packageTypes[0] == PackageType.DotnetTool ||
                                                 packageTypes[0] == PackageType.DotnetCliTool))
                 {
@@ -769,7 +778,6 @@ namespace NuGetGallery
                         .SelectMany(p => items.FindItemGroups(p));
 
                     // Filter out MSBuild assets that don't match the package ID and append to groups we already have
-                    var packageId = nuspecReader.GetId();
                     var msbuildGroups = msbuildPatterns
                         .SelectMany(p => items.FindItemGroups(p))
                         .Where(g => HasBuildItemsForPackageId(g.Items, packageId));
