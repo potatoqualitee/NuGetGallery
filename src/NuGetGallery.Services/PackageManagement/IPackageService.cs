@@ -10,6 +10,7 @@ using NuGet.Packaging;
 using NuGet.Services.Entities;
 using NuGet.Versioning;
 using NuGetGallery.Packaging;
+using PackageType = NuGet.Packaging.Core.PackageType;
 
 namespace NuGetGallery
 {
