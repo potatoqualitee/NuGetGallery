@@ -118,6 +118,8 @@ namespace NuGetGallery
 
         IEnumerable<NuGetFramework> GetSupportedFrameworks(NuspecReader nuspecReader, IList<string> packageFiles);
 
+        IEnumerable<NuGetFramework> GetSupportedFrameworks(string packageId, IReadOnlyList<PackageType> packageTypes, IList<string> packageFiles);
+
         Task PublishPackageAsync(string id, string version, bool commitChanges = true);
         Task PublishPackageAsync(Package package, bool commitChanges = true);
 
