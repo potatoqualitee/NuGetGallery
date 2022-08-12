@@ -22,13 +22,6 @@ namespace NuGetGallery
     public interface IPackageService : ICorePackageService
     {
         /// <summary>
-        /// Returns a package dependents object that includes a collection of the top packages that 
-        /// depend on the focus package and a total count of those dependents.
-        /// </summary>
-        /// <param name="id">The package ID.</param>
-        PackageDependents GetPackageDependents(string id);
-
-        /// <summary>
         /// Returns all packages with an <see cref="Package.Id"/> of <paramref name="id"/>.
         /// Includes deprecation fields based on <paramref name="deprecationFields"/>.
         /// </summary>
@@ -98,6 +91,37 @@ namespace NuGetGallery
 
         IEnumerable<Package> FindDependentPackages(Package package);
 
+        IEnumerable<NuGetFramework> GetSupportedFrameworks(NuspecReader nuspecReader, IList<string> packageFiles);
+
+        IEnumerable<NuGetFramework> GetSupportedFrameworks(string packageId, IReadOnlyList<PackageType> packageTypes, IList<string> packageFiles);
+
+        Task PublishPackageAsync(string id, string version, bool commitChanges = true);
+        Task PublishPackageAsync(Package package, bool commitChanges = true);
+
+        Task RemovePackageOwnerAsync(PackageRegistration package, User user, bool commitChanges = true);
+
+        Task SetLicenseReportVisibilityAsync(Package package, bool visible, bool commitChanges = true);
+
+        Task IncrementDownloadCountAsync(string id, string version, bool commitChanges = true);
+
+        Task UpdatePackageVerifiedStatusAsync(IReadOnlyCollection<PackageRegistration> package, bool isVerified, bool commitChanges = true);
+
+        /// <summary>
+        /// Get a package's status, or <c>null</c> if the package does not exist.
+        /// </summary>
+        /// <param name="packageId">The package's ID.</param>
+        /// <param name="packageVersion">The package's version.</param>
+        /// <returns>The package's status, or <c>null</c> is the package does not exist.</returns>
+        PackageStatus? GetPackageStatus(string packageId, NuGetVersion packageVersion);
+
+#if NET472
+        /// <summary>
+        /// Returns a package dependents object that includes a collection of the top packages that 
+        /// depend on the focus package and a total count of those dependents.
+        /// </summary>
+        /// <param name="id">The package ID.</param>
+        PackageDependents GetPackageDependents(string id);
+
         /// <summary>
         /// Populate the related database tables to create the specified package for the specified user. It is the
         /// caller's responsibility to commit changes to the entity context.
@@ -117,13 +141,6 @@ namespace NuGetGallery
 
         IEnumerable<NuGetFramework> GetSupportedFrameworks(PackageArchiveReader package);
 
-        IEnumerable<NuGetFramework> GetSupportedFrameworks(NuspecReader nuspecReader, IList<string> packageFiles);
-
-        IEnumerable<NuGetFramework> GetSupportedFrameworks(string packageId, IReadOnlyList<PackageType> packageTypes, IList<string> packageFiles);
-
-        Task PublishPackageAsync(string id, string version, bool commitChanges = true);
-        Task PublishPackageAsync(Package package, bool commitChanges = true);
-
         /// <summary>
         /// Performs database changes to add a new package owner while removing the corresponding package owner request.
         /// </summary>
@@ -132,20 +149,12 @@ namespace NuGetGallery
         /// <returns>Awaitable task.</returns>
         Task AddPackageOwnerAsync(PackageRegistration package, User newOwner, bool commitChanges = true);
 
-        Task RemovePackageOwnerAsync(PackageRegistration package, User user, bool commitChanges = true);
-
         /// <remarks>
         /// A package is orphaned if it is not owned by a user account or an organization with user account members.
         /// </remarks>
         bool WillPackageBeOrphanedIfOwnerRemoved(PackageRegistration package, User ownerToRemove);
 
-        Task SetLicenseReportVisibilityAsync(Package package, bool visible, bool commitChanges = true);
-
         Task EnsureValid(PackageArchiveReader packageArchiveReader);
-
-        Task IncrementDownloadCountAsync(string id, string version, bool commitChanges = true);
-
-        Task UpdatePackageVerifiedStatusAsync(IReadOnlyCollection<PackageRegistration> package, bool isVerified, bool commitChanges = true);
 
         /// <summary>
         /// Sets the required signer on all owned package registrations.
@@ -165,13 +174,6 @@ namespace NuGetGallery
         /// <exception cref="ArgumentNullException">Thrown if <paramref name="registration" />
         /// is <c>null</c>.</exception>
         Task SetRequiredSignerAsync(PackageRegistration registration, User signer, bool commitChanges = true);
-
-        /// <summary>
-        /// Get a package's status, or <c>null</c> if the package does not exist.
-        /// </summary>
-        /// <param name="packageId">The package's ID.</param>
-        /// <param name="packageVersion">The package's version.</param>
-        /// <returns>The package's status, or <c>null</c> is the package does not exist.</returns>
-        PackageStatus? GetPackageStatus(string packageId, NuGetVersion packageVersion);
+#endif
     }
 }

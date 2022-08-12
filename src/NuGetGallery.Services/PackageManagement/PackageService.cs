@@ -17,10 +17,13 @@ using NuGet.RuntimeModel;
 using NuGet.Services.Entities;
 using NuGet.Versioning;
 using NuGetGallery.Auditing;
-using NuGetGallery.Helpers;
 using NuGetGallery.Packaging;
-using NuGetGallery.Security;
 using PackageType = NuGet.Packaging.Core.PackageType;
+
+#if NET472
+using NuGetGallery.Helpers;
+using NuGetGallery.Security;
+#endif
 
 namespace NuGetGallery
 {
@@ -29,12 +32,13 @@ namespace NuGetGallery
         private const string MarkdownFileExtension = ".md";
 
         private readonly IAuditingService _auditingService;
+        private readonly IEntitiesContext _entitiesContext;
+        private const int packagesDisplayed = 5;
+#if NET472
         private readonly ITelemetryService _telemetryService;
         private readonly ISecurityPolicyService _securityPolicyService;
-        private readonly IEntitiesContext _entitiesContext;
         private readonly IContentObjectService _contentObjectService;
         private readonly IFeatureFlagService _featureFlagService;
-        private const int packagesDisplayed = 5;
 
         public PackageService(
             IEntityRepository<PackageRegistration> packageRegistrationRepository,
@@ -55,84 +59,18 @@ namespace NuGetGallery
             _contentObjectService = contentObjectService ?? throw new ArgumentNullException(nameof(contentObjectService));
             _featureFlagService = featureFlagService ?? throw new ArgumentNullException(nameof(featureFlagService));
         }
+#endif
 
-        /// <summary>
-        /// When no exceptions thrown, this method ensures the package metadata is valid.
-        /// </summary>
-        /// <param name="packageArchiveReader">
-        /// The <see cref="PackageArchiveReader"/> instance providing the package metadata.
-        /// </param>
-        /// <exception cref="InvalidPackageException">
-        /// This exception will be thrown when a package metadata property violates a data validation constraint.
-        /// </exception>
-        public async Task EnsureValid(PackageArchiveReader packageArchiveReader)
+        public PackageService(
+            IEntityRepository<PackageRegistration> packageRegistrationRepository,
+            IEntityRepository<Package> packageRepository,
+            IEntityRepository<Certificate> certificateRepository,
+            IAuditingService auditingService,
+            IEntitiesContext entitiesContext)
+            : base(packageRepository, packageRegistrationRepository, certificateRepository)
         {
-            try
-            {
-                var packageMetadata = PackageMetadata.FromNuspecReader(
-                    packageArchiveReader.GetNuspecReader(),
-                    strict: true);
-
-                if (packageMetadata.IsSymbolsPackage())
-                {
-                    throw new InvalidPackageException(ServicesStrings.UploadPackage_SymbolsPackageNotAllowed);
-                }
-
-                PackageHelper.ValidateNuGetPackageMetadata(packageMetadata);
-
-                var supportedFrameworks = GetSupportedFrameworks(packageArchiveReader).Select(fn => fn.ToShortNameOrNull()).ToArray();
-                if (!supportedFrameworks.AnySafe(sf => sf == null))
-                {
-                    ValidateSupportedFrameworks(supportedFrameworks);
-                }
-
-                // This will throw if the package contains an entry which will extract outside of the target extraction directory
-                await packageArchiveReader.ValidatePackageEntriesAsync(CancellationToken.None);
-            }
-            catch (Exception exception) when (exception is EntityException || exception is PackagingException)
-            {
-                // Wrap the exception for consistency of this API.
-                throw new InvalidPackageException(exception.Message, exception);
-            }
-        }
-
-        /// <summary>
-        /// Validates and creates a <see cref="Package"/> entity from a NuGet package archive.
-        /// </summary>
-        /// <param name="nugetPackage">A <see cref="PackageArchiveReader"/> instance from which package metadata can be read.</param>
-        /// <param name="packageStreamMetadata">The <see cref="PackageStreamMetadata"/> instance providing metadata about the package stream.</param>
-        /// <param name="owner">The <see cref="User"/> creating the package.</param>
-        /// <param name="commitChanges"><c>True</c> to commit the changes to the data store and notify the indexing service; otherwise <c>false</c>.</param>
-        /// <returns>Returns the created <see cref="Package"/> entity.</returns>
-        /// <exception cref="InvalidPackageException">
-        /// This exception will be thrown when a package metadata property violates a data validation constraint.
-        /// </exception>
-        public async Task<Package> CreatePackageAsync(PackageArchiveReader nugetPackage, PackageStreamMetadata packageStreamMetadata, User owner, User currentUser, bool isVerified)
-        {
-            PackageMetadata packageMetadata;
-            PackageRegistration packageRegistration;
-
-            try
-            {
-                packageMetadata = PackageMetadata.FromNuspecReader(
-                    nugetPackage.GetNuspecReader(),
-                    strict: true);
-
-                PackageHelper.ValidateNuGetPackageMetadata(packageMetadata);
-
-                packageRegistration = CreateOrGetPackageRegistration(owner, packageMetadata, isVerified);
-            }
-            catch (Exception exception) when (exception is EntityException || exception is PackagingException)
-            {
-                // Wrap the exception for consistency of this API.
-                throw new InvalidPackageException(exception.Message, exception);
-            }
-
-            var package = CreatePackageFromNuGetPackage(packageRegistration, nugetPackage, packageMetadata, packageStreamMetadata, currentUser);
-            packageRegistration.Packages.Add(package);
-            await UpdateIsLatestAsync(packageRegistration, commitChanges: false);
-
-            return package;
+            _auditingService = auditingService ?? throw new ArgumentNullException(nameof(auditingService));
+            _entitiesContext = entitiesContext ?? throw new ArgumentNullException(nameof(entitiesContext));
         }
 
         public IQueryable<PackageRegistration> GetAllPackageRegistrations()
@@ -157,50 +95,6 @@ namespace NuGetGallery
             PackageDeprecationFieldsToInclude deprecationFields = PackageDeprecationFieldsToInclude.None)
         {
             return GetPackagesByIdQueryable(id, deprecationFields).ToList();
-        }
-
-        public PackageDependents GetPackageDependents(string id)
-        {
-            if (string.IsNullOrWhiteSpace(id))
-            {
-                throw new ArgumentNullException(nameof(id));
-            }
-
-            PackageDependents result = new PackageDependents();
-
-            // We use OPTIMIZE FOR UNKNOWN by default here because there are distinct 2-3 query plans that may be
-            // selected via SQL Server parameter sniffing. Because SQL Server caches query plans, this means that the
-            // first parameter plus query combination that SQL sees defines which query plan is selected and cached for
-            // all subsequent parameter values of the same query. This could result in a non-optimal query plan getting
-            // cached depending on what package ID is viewed first. Using OPTIMIZE FOR UNKNOWN causes a predictable
-            // query plan to be cached.
-            // 
-            // For example, the query plan for Newtonsoft.Json is very good for that specific parameter value since
-            // there are so many package dependents but the same query plan takes a very long time for packages with few
-            // or no dependents. The query plan for "UNKNOWN" (that is a package ID with unknown SQL Server statistic)
-            // behaves somewhat poorly for Newtonsoft.Json (2-5 seconds) but very well for the vast majority of
-            // packages. Because we have in-memory caching above this layer, OPTIMIZE FOR UNKNOWN is acceptable other
-            // unconfigured cases similar to Newtonsoft.Json because the extra cost of the non-optimal query plan is
-            // amortized over many, many page views. For the long tail packages, in-memory caching is less effective
-            // (low page views) so an optimal query should be selected for this category.
-            //
-            // For the cases where RECOMPILE is known to perform the best, the package ID can be added to the query hint
-            // configuration JSON file from the content object service. This should only be done when the following
-            // things are true:
-            //
-            //   1. The overhead of SQL Server recompile is worth it. We have seen the overhead to be 5-50ms.
-            //   2. SQL Server has up to date statistics which will lead to the proper query plan being selected.
-            //   3. SQL Server actually picks the proper query plan. We have observed cases where this does not happen
-            //      even with up-to-date statistics.
-            //
-            var useRecompile = _contentObjectService.QueryHintConfiguration.ShouldUseRecompileForPackageDependents(id);
-            using (_entitiesContext.WithQueryHint(useRecompile ? "RECOMPILE" : "OPTIMIZE FOR UNKNOWN"))
-            {
-                result.TopPackages = GetListOfDependents(id);
-                result.TotalPackageCount = GetDependentCount(id);
-            }
-
-            return result;
         }
 
         private IReadOnlyCollection<PackageDependent> GetListOfDependents(string id)
@@ -512,21 +406,6 @@ namespace NuGetGallery
             }
         }
 
-        public async Task AddPackageOwnerAsync(PackageRegistration package, User newOwner, bool commitChanges = true)
-        {
-            package.Owners.Add(newOwner);
-
-            if (commitChanges)
-            {
-                await _packageRepository.CommitChangesAsync();
-            }
-
-            if (_securityPolicyService.IsSubscribed(newOwner, AutomaticallyOverwriteRequiredSignerPolicy.PolicyName))
-            {
-                await SetRequiredSignerAsync(package, newOwner, commitChanges);
-            }
-        }
-
         public async Task RemovePackageOwnerAsync(PackageRegistration package, User user, bool commitChanges = true)
         {
             // To support the delete account scenario, the admin can delete the last owner of a package.
@@ -536,48 +415,6 @@ namespace NuGetGallery
             {
                 await _packageRepository.CommitChangesAsync();
             }
-        }
-
-        public bool WillPackageBeOrphanedIfOwnerRemoved(PackageRegistration packageRegistration, User ownerToRemove)
-        {
-            // If the registration has no packages, no packages will be orphaned if the owner is removed. 
-            if (!packageRegistration.Packages.Any())
-            {
-                return false;
-            }
-            return WillPackageBeOrphanedIfOwnerRemovedHelper(packageRegistration.Owners, ownerToRemove);
-        }
-
-        private bool WillPackageBeOrphanedIfOwnerRemovedHelper(IEnumerable<User> owners, User ownerToRemove)
-        {
-            // Iterate through each owner, attempting to find a user that is not the owner we are removing.
-            foreach (var owner in owners)
-            {
-                if (owner.MatchesUser(ownerToRemove))
-                {
-                    continue;
-                }
-
-                if (owner is Organization organization)
-                {
-                    // The package will still be orphaned if it is owned by an orphaned organization.
-                    // Iterate through the organization owner's members to determine if it has any members that are not the member we are removing.
-                    if (!WillPackageBeOrphanedIfOwnerRemovedHelper(
-                        organization.Members.Select(m => m.Member),
-                        ownerToRemove))
-                    {
-                        return false;
-                    }
-                }
-                else
-                {
-                    // The package will not be orphaned because it is owned by a user that is not the owner we are removing.
-                    return false;
-                }
-            }
-
-            // The package will be orphaned because we did not find an owner that is not the owner we are removing.
-            return true;
         }
 
         private PackageRegistration CreateOrGetPackageRegistration(User owner, PackageMetadata packageMetadata, bool isVerified)
@@ -599,117 +436,6 @@ namespace NuGetGallery
             }
 
             return packageRegistration;
-        }
-
-        private Package CreatePackageFromNuGetPackage(PackageRegistration packageRegistration, PackageArchiveReader nugetPackage, PackageMetadata packageMetadata, PackageStreamMetadata packageStreamMetadata, User user)
-        {
-            var package = packageRegistration.Packages.SingleOrDefault(pv => pv.Version == packageMetadata.Version.OriginalVersion);
-
-            if (package != null)
-            {
-                throw new PackageAlreadyExistsException(
-                    string.Format(ServicesStrings.PackageExistsAndCannotBeModified, packageRegistration.Id, package.Version));
-            }
-
-            package = new Package();
-            package.PackageRegistration = packageRegistration;
-
-            package = EnrichPackageFromNuGetPackage(package, nugetPackage, packageMetadata, packageStreamMetadata, user);
-
-            return package;
-        }
-
-        public virtual Package EnrichPackageFromNuGetPackage(
-            Package package,
-            PackageArchiveReader packageArchive,
-            PackageMetadata packageMetadata,
-            PackageStreamMetadata packageStreamMetadata,
-            User user)
-        {
-            package.Id = packageMetadata.Id;
-
-            // Version must always be the exact string from the nuspec, which OriginalVersion will return to us.
-            // However, we do also store a normalized copy for looking up later.
-            package.Version = packageMetadata.Version.OriginalVersion;
-            package.NormalizedVersion = packageMetadata.Version.ToNormalizedString();
-
-            package.Description = packageMetadata.Description;
-            package.ReleaseNotes = packageMetadata.ReleaseNotes;
-            package.HashAlgorithm = packageStreamMetadata.HashAlgorithm;
-            package.Hash = packageStreamMetadata.Hash;
-            package.PackageFileSize = packageStreamMetadata.Size;
-            package.Language = packageMetadata.Language;
-            package.Copyright = packageMetadata.Copyright;
-            package.FlattenedAuthors = packageMetadata.Authors.Flatten();
-            package.IsPrerelease = packageMetadata.Version.IsPrerelease;
-            package.Listed = true;
-            package.RequiresLicenseAcceptance = packageMetadata.RequireLicenseAcceptance;
-            package.DevelopmentDependency = packageMetadata.DevelopmentDependency;
-            package.Summary = packageMetadata.Summary;
-            package.Tags = PackageHelper.ParseTags(packageMetadata.Tags);
-            package.Title = packageMetadata.Title;
-            package.User = user;
-
-            package.IconUrl = packageMetadata.IconUrl.ToEncodedUrlStringOrNull();
-            package.LicenseUrl = packageMetadata.LicenseUrl.ToEncodedUrlStringOrNull();
-            package.ProjectUrl = packageMetadata.ProjectUrl.ToEncodedUrlStringOrNull();
-            package.RepositoryUrl = packageMetadata.RepositoryUrl.ToEncodedUrlStringOrNull();
-            package.RepositoryType = packageMetadata.RepositoryType;
-            package.MinClientVersion = packageMetadata.MinClientVersion.ToStringOrNull();
-
-#pragma warning disable 618 // TODO: remove Package.Authors completely once production services definitely no longer need it
-            foreach (var author in packageMetadata.Authors)
-            {
-                package.Authors.Add(new PackageAuthor { Name = author });
-            }
-#pragma warning restore 618
-            
-            var supportedFrameworkNames = GetSupportedFrameworks(packageArchive)
-                .Select(fn => fn.GetShortFolderName())
-                .Where(fn => fn != null)
-                .ToArray();
-
-            ValidateSupportedFrameworks(supportedFrameworkNames);
-
-            foreach (var supportedFramework in supportedFrameworkNames)
-            {
-                package.SupportedFrameworks.Add(new PackageFramework { TargetFramework = supportedFramework });
-            }
-
-            package.Dependencies = packageMetadata
-                .GetDependencyGroups()
-                .AsPackageDependencyEnumerable()
-                .ToList();
-
-            package.PackageTypes = packageMetadata
-                .GetPackageTypes()
-                .AsPackageTypeEnumerable()
-                .ToList();
-
-            package.FlattenedDependencies = package.Dependencies.Flatten();
-
-            package.FlattenedPackageTypes = package.PackageTypes.Flatten();
-
-            // Identify the SemVerLevelKey using the original package version string and package dependencies
-            package.SemVerLevelKey = SemVerLevelKey.ForPackage(packageMetadata.Version, package.Dependencies);
-
-            package.EmbeddedLicenseType = GetEmbeddedLicenseType(packageMetadata);
-            package.LicenseExpression = GetLicenseExpression(packageMetadata);
-            package.HasEmbeddedIcon = !string.IsNullOrWhiteSpace(packageMetadata.IconFile);
-            package.HasReadMe = !string.IsNullOrWhiteSpace(packageMetadata.ReadmeFile);
-            package.EmbeddedReadmeType = GetEmbeddedReadmeType(packageMetadata);
-
-            return package;
-        }
-
-        public virtual IEnumerable<NuGetFramework> GetSupportedFrameworks(PackageArchiveReader package)
-        {
-            if (_featureFlagService.ArePatternSetTfmHeuristicsEnabled())
-            {
-                return GetSupportedFrameworks(package.NuspecReader, PackageValidationHelper.GetNormalizedEntryPaths(package));
-            }
-
-            return package.GetSupportedFrameworks();
         }
 
         public virtual IEnumerable<NuGetFramework> GetSupportedFrameworks(NuspecReader nuspecReader, IList<string> packageFiles)
@@ -939,6 +665,313 @@ namespace NuGetGallery
             }
         }
 
+        public PackageStatus? GetPackageStatus(string packageId, NuGetVersion packageVersion)
+        {
+            var normalizedVersion = packageVersion.ToNormalizedString();
+
+            // Note the casting to a nullable enum in the "Select". This is required to
+            // return "null" if there are no rows. Otherwise, "FirstOrDefault" would return
+            // "PackageStatus.Available" as the default value.
+            return _packageRepository
+                .GetAll()
+                .Where(p => p.PackageRegistration.Id == packageId)
+                .Where(p => p.Version == normalizedVersion)
+                .Select(p => (PackageStatus?)p.PackageStatusKey)
+                .FirstOrDefault();
+        }
+
+#if NET472
+        /// <summary>
+        /// When no exceptions thrown, this method ensures the package metadata is valid.
+        /// </summary>
+        /// <param name="packageArchiveReader">
+        /// The <see cref="PackageArchiveReader"/> instance providing the package metadata.
+        /// </param>
+        /// <exception cref="InvalidPackageException">
+        /// This exception will be thrown when a package metadata property violates a data validation constraint.
+        /// </exception>
+        public async Task EnsureValid(PackageArchiveReader packageArchiveReader)
+        {
+            try
+            {
+                var packageMetadata = PackageMetadata.FromNuspecReader(
+                    packageArchiveReader.GetNuspecReader(),
+                    strict: true);
+
+                if (packageMetadata.IsSymbolsPackage())
+                {
+                    throw new InvalidPackageException(ServicesStrings.UploadPackage_SymbolsPackageNotAllowed);
+                }
+
+                PackageHelper.ValidateNuGetPackageMetadata(packageMetadata);
+
+                var supportedFrameworks = GetSupportedFrameworks(packageArchiveReader).Select(fn => fn.ToShortNameOrNull()).ToArray();
+                if (!supportedFrameworks.AnySafe(sf => sf == null))
+                {
+                    ValidateSupportedFrameworks(supportedFrameworks);
+                }
+
+                // This will throw if the package contains an entry which will extract outside of the target extraction directory
+                await packageArchiveReader.ValidatePackageEntriesAsync(CancellationToken.None);
+            }
+            catch (Exception exception) when (exception is EntityException || exception is PackagingException)
+            {
+                // Wrap the exception for consistency of this API.
+                throw new InvalidPackageException(exception.Message, exception);
+            }
+        }
+
+        /// <summary>
+        /// Validates and creates a <see cref="Package"/> entity from a NuGet package archive.
+        /// </summary>
+        /// <param name="nugetPackage">A <see cref="PackageArchiveReader"/> instance from which package metadata can be read.</param>
+        /// <param name="packageStreamMetadata">The <see cref="PackageStreamMetadata"/> instance providing metadata about the package stream.</param>
+        /// <param name="owner">The <see cref="User"/> creating the package.</param>
+        /// <param name="commitChanges"><c>True</c> to commit the changes to the data store and notify the indexing service; otherwise <c>false</c>.</param>
+        /// <returns>Returns the created <see cref="Package"/> entity.</returns>
+        /// <exception cref="InvalidPackageException">
+        /// This exception will be thrown when a package metadata property violates a data validation constraint.
+        /// </exception>
+        public async Task<Package> CreatePackageAsync(PackageArchiveReader nugetPackage, PackageStreamMetadata packageStreamMetadata, User owner, User currentUser, bool isVerified)
+        {
+            PackageMetadata packageMetadata;
+            PackageRegistration packageRegistration;
+
+            try
+            {
+                packageMetadata = PackageMetadata.FromNuspecReader(
+                    nugetPackage.GetNuspecReader(),
+                    strict: true);
+
+                PackageHelper.ValidateNuGetPackageMetadata(packageMetadata);
+
+                packageRegistration = CreateOrGetPackageRegistration(owner, packageMetadata, isVerified);
+            }
+            catch (Exception exception) when (exception is EntityException || exception is PackagingException)
+            {
+                // Wrap the exception for consistency of this API.
+                throw new InvalidPackageException(exception.Message, exception);
+            }
+
+            var package = CreatePackageFromNuGetPackage(packageRegistration, nugetPackage, packageMetadata, packageStreamMetadata, currentUser);
+            packageRegistration.Packages.Add(package);
+            await UpdateIsLatestAsync(packageRegistration, commitChanges: false);
+
+            return package;
+        }
+
+        public PackageDependents GetPackageDependents(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentNullException(nameof(id));
+            }
+
+            PackageDependents result = new PackageDependents();
+
+            // We use OPTIMIZE FOR UNKNOWN by default here because there are distinct 2-3 query plans that may be
+            // selected via SQL Server parameter sniffing. Because SQL Server caches query plans, this means that the
+            // first parameter plus query combination that SQL sees defines which query plan is selected and cached for
+            // all subsequent parameter values of the same query. This could result in a non-optimal query plan getting
+            // cached depending on what package ID is viewed first. Using OPTIMIZE FOR UNKNOWN causes a predictable
+            // query plan to be cached.
+            // 
+            // For example, the query plan for Newtonsoft.Json is very good for that specific parameter value since
+            // there are so many package dependents but the same query plan takes a very long time for packages with few
+            // or no dependents. The query plan for "UNKNOWN" (that is a package ID with unknown SQL Server statistic)
+            // behaves somewhat poorly for Newtonsoft.Json (2-5 seconds) but very well for the vast majority of
+            // packages. Because we have in-memory caching above this layer, OPTIMIZE FOR UNKNOWN is acceptable other
+            // unconfigured cases similar to Newtonsoft.Json because the extra cost of the non-optimal query plan is
+            // amortized over many, many page views. For the long tail packages, in-memory caching is less effective
+            // (low page views) so an optimal query should be selected for this category.
+            //
+            // For the cases where RECOMPILE is known to perform the best, the package ID can be added to the query hint
+            // configuration JSON file from the content object service. This should only be done when the following
+            // things are true:
+            //
+            //   1. The overhead of SQL Server recompile is worth it. We have seen the overhead to be 5-50ms.
+            //   2. SQL Server has up to date statistics which will lead to the proper query plan being selected.
+            //   3. SQL Server actually picks the proper query plan. We have observed cases where this does not happen
+            //      even with up-to-date statistics.
+            //
+            var useRecompile = _contentObjectService.QueryHintConfiguration.ShouldUseRecompileForPackageDependents(id);
+            using (_entitiesContext.WithQueryHint(useRecompile ? "RECOMPILE" : "OPTIMIZE FOR UNKNOWN"))
+            {
+                result.TopPackages = GetListOfDependents(id);
+                result.TotalPackageCount = GetDependentCount(id);
+            }
+
+            return result;
+        }
+
+        public async Task AddPackageOwnerAsync(PackageRegistration package, User newOwner, bool commitChanges = true)
+        {
+            package.Owners.Add(newOwner);
+
+            if (commitChanges)
+            {
+                await _packageRepository.CommitChangesAsync();
+            }
+
+            if (_securityPolicyService.IsSubscribed(newOwner, AutomaticallyOverwriteRequiredSignerPolicy.PolicyName))
+            {
+                await SetRequiredSignerAsync(package, newOwner, commitChanges);
+            }
+        }
+
+        public bool WillPackageBeOrphanedIfOwnerRemoved(PackageRegistration packageRegistration, User ownerToRemove)
+        {
+            // If the registration has no packages, no packages will be orphaned if the owner is removed. 
+            if (!packageRegistration.Packages.Any())
+            {
+                return false;
+            }
+            return WillPackageBeOrphanedIfOwnerRemovedHelper(packageRegistration.Owners, ownerToRemove);
+        }
+
+        private bool WillPackageBeOrphanedIfOwnerRemovedHelper(IEnumerable<User> owners, User ownerToRemove)
+        {
+            // Iterate through each owner, attempting to find a user that is not the owner we are removing.
+            foreach (var owner in owners)
+            {
+                if (owner.MatchesUser(ownerToRemove))
+                {
+                    continue;
+                }
+
+                if (owner is Organization organization)
+                {
+                    // The package will still be orphaned if it is owned by an orphaned organization.
+                    // Iterate through the organization owner's members to determine if it has any members that are not the member we are removing.
+                    if (!WillPackageBeOrphanedIfOwnerRemovedHelper(
+                        organization.Members.Select(m => m.Member),
+                        ownerToRemove))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    // The package will not be orphaned because it is owned by a user that is not the owner we are removing.
+                    return false;
+                }
+            }
+
+            // The package will be orphaned because we did not find an owner that is not the owner we are removing.
+            return true;
+        }
+
+        private Package CreatePackageFromNuGetPackage(PackageRegistration packageRegistration, PackageArchiveReader nugetPackage, PackageMetadata packageMetadata, PackageStreamMetadata packageStreamMetadata, User user)
+        {
+            var package = packageRegistration.Packages.SingleOrDefault(pv => pv.Version == packageMetadata.Version.OriginalVersion);
+
+            if (package != null)
+            {
+                throw new PackageAlreadyExistsException(
+                    string.Format(ServicesStrings.PackageExistsAndCannotBeModified, packageRegistration.Id, package.Version));
+            }
+
+            package = new Package();
+            package.PackageRegistration = packageRegistration;
+
+            package = EnrichPackageFromNuGetPackage(package, nugetPackage, packageMetadata, packageStreamMetadata, user);
+
+            return package;
+        }
+
+        public virtual Package EnrichPackageFromNuGetPackage(
+            Package package,
+            PackageArchiveReader packageArchive,
+            PackageMetadata packageMetadata,
+            PackageStreamMetadata packageStreamMetadata,
+            User user)
+        {
+            package.Id = packageMetadata.Id;
+
+            // Version must always be the exact string from the nuspec, which OriginalVersion will return to us.
+            // However, we do also store a normalized copy for looking up later.
+            package.Version = packageMetadata.Version.OriginalVersion;
+            package.NormalizedVersion = packageMetadata.Version.ToNormalizedString();
+
+            package.Description = packageMetadata.Description;
+            package.ReleaseNotes = packageMetadata.ReleaseNotes;
+            package.HashAlgorithm = packageStreamMetadata.HashAlgorithm;
+            package.Hash = packageStreamMetadata.Hash;
+            package.PackageFileSize = packageStreamMetadata.Size;
+            package.Language = packageMetadata.Language;
+            package.Copyright = packageMetadata.Copyright;
+            package.FlattenedAuthors = packageMetadata.Authors.Flatten();
+            package.IsPrerelease = packageMetadata.Version.IsPrerelease;
+            package.Listed = true;
+            package.RequiresLicenseAcceptance = packageMetadata.RequireLicenseAcceptance;
+            package.DevelopmentDependency = packageMetadata.DevelopmentDependency;
+            package.Summary = packageMetadata.Summary;
+            package.Tags = PackageHelper.ParseTags(packageMetadata.Tags);
+            package.Title = packageMetadata.Title;
+            package.User = user;
+
+            package.IconUrl = packageMetadata.IconUrl.ToEncodedUrlStringOrNull();
+            package.LicenseUrl = packageMetadata.LicenseUrl.ToEncodedUrlStringOrNull();
+            package.ProjectUrl = packageMetadata.ProjectUrl.ToEncodedUrlStringOrNull();
+            package.RepositoryUrl = packageMetadata.RepositoryUrl.ToEncodedUrlStringOrNull();
+            package.RepositoryType = packageMetadata.RepositoryType;
+            package.MinClientVersion = packageMetadata.MinClientVersion.ToStringOrNull();
+
+#pragma warning disable 618 // TODO: remove Package.Authors completely once production services definitely no longer need it
+            foreach (var author in packageMetadata.Authors)
+            {
+                package.Authors.Add(new PackageAuthor { Name = author });
+            }
+#pragma warning restore 618
+            
+            var supportedFrameworkNames = GetSupportedFrameworks(packageArchive)
+                .Select(fn => fn.GetShortFolderName())
+                .Where(fn => fn != null)
+                .ToArray();
+
+            ValidateSupportedFrameworks(supportedFrameworkNames);
+
+            foreach (var supportedFramework in supportedFrameworkNames)
+            {
+                package.SupportedFrameworks.Add(new PackageFramework { TargetFramework = supportedFramework });
+            }
+
+            package.Dependencies = packageMetadata
+                .GetDependencyGroups()
+                .AsPackageDependencyEnumerable()
+                .ToList();
+
+            package.PackageTypes = packageMetadata
+                .GetPackageTypes()
+                .AsPackageTypeEnumerable()
+                .ToList();
+
+            package.FlattenedDependencies = package.Dependencies.Flatten();
+
+            package.FlattenedPackageTypes = package.PackageTypes.Flatten();
+
+            // Identify the SemVerLevelKey using the original package version string and package dependencies
+            package.SemVerLevelKey = SemVerLevelKey.ForPackage(packageMetadata.Version, package.Dependencies);
+
+            package.EmbeddedLicenseType = GetEmbeddedLicenseType(packageMetadata);
+            package.LicenseExpression = GetLicenseExpression(packageMetadata);
+            package.HasEmbeddedIcon = !string.IsNullOrWhiteSpace(packageMetadata.IconFile);
+            package.HasReadMe = !string.IsNullOrWhiteSpace(packageMetadata.ReadmeFile);
+            package.EmbeddedReadmeType = GetEmbeddedReadmeType(packageMetadata);
+
+            return package;
+        }
+
+        public virtual IEnumerable<NuGetFramework> GetSupportedFrameworks(PackageArchiveReader package)
+        {
+            if (_featureFlagService.ArePatternSetTfmHeuristicsEnabled())
+            {
+                return GetSupportedFrameworks(package.NuspecReader, PackageValidationHelper.GetNormalizedEntryPaths(package));
+            }
+
+            return package.GetSupportedFrameworks();
+        }
+
         /// <summary>
         /// Asynchronously sets the signer as the required signer on all package registrations owned by the signer.
         /// </summary>
@@ -1062,20 +1095,6 @@ namespace NuGetGallery
                 _telemetryService.TrackRequiredSignerSet(registration.Id);
             }
         }
-
-        public PackageStatus? GetPackageStatus(string packageId, NuGetVersion packageVersion)
-        {
-            var normalizedVersion = packageVersion.ToNormalizedString();
-
-            // Note the casting to a nullable enum in the "Select". This is required to
-            // return "null" if there are no rows. Otherwise, "FirstOrDefault" would return
-            // "PackageStatus.Available" as the default value.
-            return _packageRepository
-                .GetAll()
-                .Where(p => p.PackageRegistration.Id == packageId)
-                .Where(p => p.Version == normalizedVersion)
-                .Select(p => (PackageStatus?)p.PackageStatusKey)
-                .FirstOrDefault();
-        }
+#endif
     }
 }
